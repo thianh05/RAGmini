@@ -9,10 +9,6 @@ import concurrent.futures
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
 class RAGEvaluator:
-    """
-    Hệ thống Đánh giá Tự động (Automated Evaluation Framework) cho RAG.
-    Tích hợp xử lý song song để tăng tốc độ chạy Testbench.
-    """
     
     def __init__(self, retriever_func: Callable, top_k: int = 4):
         self.retriever = retriever_func
@@ -20,7 +16,6 @@ class RAGEvaluator:
         self.results: List[Dict[str, Any]] = []
         
     def _evaluate_single_query(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
-        """Đánh giá độc lập 1 câu hỏi (Worker function cho ThreadPool)"""
         query = test_case["query"]
         expected_pages = set(test_case["expected_pages"])
         
@@ -36,19 +31,18 @@ class RAGEvaluator:
             
         latency = time.time() - start_time
         
-        # Tính toán Logic các Metrics
+        # Logic Metrics
         hit = False
         rank = 0
         precision_hits = 0
         
         for i, page in enumerate(retrieved_pages):
             if page in expected_pages:
-                if not hit: # Chỉ lấy rank của kết quả đúng ĐẦU TIÊN để tính MRR
+                if not hit: 
                     hit = True
                     rank = i + 1
-                precision_hits += 1 # Đếm tổng số kết quả đúng trong top_k
-                
-        # Tính Precision@K (Độ chuẩn xác trong K kết quả trả về)
+                precision_hits += 1 
+        
         precision_at_k = precision_hits / self.top_k if self.top_k > 0 else 0
         
         return {
@@ -63,19 +57,12 @@ class RAGEvaluator:
         }
 
     def run_testbench(self, test_data: List[Dict[str, Any]], max_workers: int = 4):
-        """
-        Khởi chạy Testbench song song. 
-        Tận dụng Multi-threading để vượt qua giới hạn I/O bound khi query model.
-        """
         logging.info(f"Bắt đầu chạy Testbench với {len(test_data)} test cases. Threads: {max_workers}")
         start_time = time.time()
         
-        # Xử lý bất đồng bộ bằng ThreadPoolExecutor
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Gửi task vào pool
             futures = [executor.submit(self._evaluate_single_query, case) for case in test_data]
             
-            # Thu thập kết quả khi hoàn thành
             for future in concurrent.futures.as_completed(futures):
                 self.results.append(future.result())
                 
@@ -85,7 +72,6 @@ class RAGEvaluator:
         self._generate_reports()
 
     def _generate_reports(self):
-        """Tính toán tổng thể và xuất báo cáo chuẩn Enterprise"""
         total_cases = len(self.results)
         if total_cases == 0:
             logging.warning("Không có dữ liệu để xuất báo cáo.")
@@ -150,12 +136,8 @@ if __name__ == "__main__":
             meta_path=str(META_PATH), 
             model=model
         )
-
-        # Wrapper function để tương thích với Evaluator
         def search_wrapper(query: str, top_k: int):
             return retriever_engine.search(query, top_k=top_k)
-
-        # Khởi chạy Evaluator với 4 luồng chạy song song
         evaluator = RAGEvaluator(retriever_func=search_wrapper, top_k=4)
         evaluator.run_testbench(TEST_DATA, max_workers=4)
 

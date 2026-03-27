@@ -1,9 +1,5 @@
 
-/* =========================================
-   1. NỀN TRẮNG TUYỆT ĐỐI & ÉP XUNG FONT CHỮ
-   ========================================= */
 
-/* Dùng dấu * để đè bẹp toàn bộ class ẩn của Streamlit */
 *, html, body, [class*="st-"], .stApp, p, div, span, h1, h2, h3, h4, h5, h6, textarea, input, button {
     font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
 }
@@ -15,14 +11,9 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContain
     -moz-osx-font-smoothing: grayscale !important;
 }
 
-/* Dọn dẹp UI rác của Streamlit */
 header, [data-testid="stHeader"], [data-testid="stToolbar"], footer {
     display: none !important;
 }
-
-/* =========================================
-   2. TYPOGRAPHY "RAGstudio"
-   ========================================= */
 h1 {
     font-size: 56px !important; 
     font-weight: 800 !important;
@@ -40,10 +31,6 @@ h1 {
     font-weight: 500; 
     margin-bottom: 2.5rem !important;
 }
-
-/* =========================================
-   3. BONG BÓNG CHAT (CĂN LỀ CHUẨN)
-   ========================================= */
 .user-bubble {
     background-color: #007aff !important; 
     color: #ffffff !important;
@@ -69,9 +56,7 @@ h1 {
     line-height: 1.65;
     border-bottom: 1px solid #f2f2f7; 
 }
-/* =========================================
-   4. KHUNG NHẬP CÂU HỎI (APPLE WHITE - CHỐNG ĐEN)
-   ========================================= */
+/* KHUNG NHẬP CÂU HỎI*/
 [data-testid="stChatInput"] {
     padding-bottom: 30px !important;
     background-color: transparent !important;
@@ -111,9 +96,7 @@ h1 {
     display: none !important;
     content: none !important;
 }
-/* =========================================
-   5. SOURCE PILLS (Nút trích dẫn)
-   ========================================= */
+/*SOURCE PILLS  */
 .source-pills-container {
     margin-top: 4px;
     padding-bottom: 15px;
