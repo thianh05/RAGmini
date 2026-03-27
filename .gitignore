@@ -1,0 +1,37 @@
+# ==========================================
+# 1. MÔI TRƯỜNG ẢO & THƯ VIỆN (KHÔNG BAO GIỜ PUSH)
+# ==========================================
+venv/
+venv_fe/
+env/
+.env
+
+# ==========================================
+# 2. FILE TẠM & CACHE CỦA PYTHON
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# ==========================================
+# 3. DỮ LIỆU NẶNG & DATABASE (LOCAL ONLY)
+# ==========================================
+# Không push file PDF giáo trình (Tránh vi phạm bản quyền và làm nặng Git)
+data/*.pdf 
+data/*.docx
+
+# Không push Vector Database của FAISS
+data/*.index
+*.faiss
+*.pkl
+
+# ==========================================
+# 4. FILE HỆ ĐIỀU HÀNH & IDE
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Bỏ qua file shortcut
+*.lnk
