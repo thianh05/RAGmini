@@ -18,5 +18,11 @@ META_PATH = DATA_DIR / "triet_embeddings.json"
 
 # CẤU HÌNH MODEL
 EMBEDDING_MODEL = 'intfloat/multilingual-e5-small'
-LLM_MODEL = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:1.5b")
+LLM_MODEL = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:3b")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# Optional HuggingFace token for higher rate limits
+HF_TOKEN = os.getenv("HF_TOKEN")
+if HF_TOKEN:
+    os.environ["HF_TOKEN"] = HF_TOKEN
+# Enable huggingface transfer for faster downloads
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"

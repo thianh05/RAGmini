@@ -2,9 +2,7 @@ import pdfplumber
 
 FILE_PATH = "../data/triet.pdf"
 def load_pdf(file_path):
-
     pages = []
-    
     with pdfplumber.open(file_path) as pdf:
         for page_number, page in enumerate(pdf.pages):
             page_text = page.extract_text()

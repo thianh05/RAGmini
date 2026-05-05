@@ -2,12 +2,9 @@ import re
 import json
 import logging
 from typing import List, Dict, Any
-
-# Giả định bạn import hàm load_pdf từ file cũ
 from load_pdf import load_pdf 
 from config import PDF_PATH, CLEAN_JSON
 
-# Cấu hình Logging chuyên nghiệp
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
 class DocumentCleaner:

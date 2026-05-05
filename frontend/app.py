@@ -3,6 +3,7 @@ import requests
 import re
 import os
 import logging
+import html
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [FRONTEND] - %(message)s')
 
@@ -60,7 +61,8 @@ if query := st.chat_input("Hỏi gì đó..."):
     
     # 1. HIỂN THỊ CÂU HỎI
     st.session_state.messages.append({"role": "user", "content": query})
-    st.markdown(f'<div class="user-bubble">{query}</div>', unsafe_allow_html=True)
+    safe_query = html.escape(query)
+    st.markdown(f'<div class="user-bubble">{safe_query}</div>', unsafe_allow_html=True)
 
     # 2. Placeholder 
     chat_placeholder = st.empty()
@@ -68,8 +70,8 @@ if query := st.chat_input("Hỏi gì đó..."):
         
     try:
         API_URL = "http://127.0.0.1:8000/ask_stream"
-        response = requests.get(API_URL, params={"query": query}, stream=True, timeout=120)
-        response.raise_for_status() 
+        response = requests.post(API_URL, json={"query": query}, stream=True, timeout=120)
+        response.raise_for_status()
         
         full_response = ""
         pages = []

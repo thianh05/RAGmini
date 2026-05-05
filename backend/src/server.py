@@ -2,59 +2,104 @@ import os
 import logging
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query
+
+# FastAPI framework
+from fastapi import FastAPI, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+# Model embedding để biến text -> vector
 from sentence_transformers import SentenceTransformer
-from ollama import AsyncClient # BẮT BUỘC DÙNG ASYNC CLIENT CHO FASTAPI
 
+# Client kết nối Ollama để gọi LLM local
+from ollama import AsyncClient 
+
+# Module tự viết
 from retrieval import HybridRetriever
-from config import INDEX_PATH, META_PATH, EMBEDDING_MODEL, LLM_MODEL, OLLAMA_URL
+from config import (
+    INDEX_PATH, 
+    META_PATH, 
+    EMBEDDING_MODEL, 
+    LLM_MODEL, 
+    OLLAMA_URL
+)
 
-# ==========================================
-# 1 - CẤU HÌNH LOGGING - BIẾN TOÀN CỤC 
-# ==========================================
+# =====================================================
+# 1. LOGGING
+# =====================================================
+# Hiển thị log ra terminal để dễ debug
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s'
+)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Biến global để dùng chung toàn app
 retriever_engine = None
 ollama_client = None
 
-# ==========================================
-# 2 - QUẢN LÝ TÀI NGUYÊN - LIFESPAN
-# ==========================================
 
+# =====================================================
+# 2. KHỞI ĐỘNG & TẮT SERVER (LIFESPAN)
+# =====================================================
+# Hàm này sẽ tự chạy:
+# - Khi server start
+# - Khi server shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # CHỐNG MEMORY LEAK 
+
     global retriever_engine, ollama_client
-    logger.info("ĐANG KHỞI ĐỘNG AI ENGINE - NẠP MODEL VÀO VRAM")
+
+    logger.info("STARTING ENGINE: Đang load model vào RAM/VRAM...")
+
     try:
-        model = SentenceTransformer(EMBEDDING_MODEL)
+        # Load embedding model
+        # asyncio.to_thread():
+        # -> chạy tác vụ nặng ở thread riêng
+        # -> tránh block event loop của FastAPI
+        model = await asyncio.to_thread(
+            SentenceTransformer,
+            EMBEDDING_MODEL
+        )
+
+        # Khởi tạo hệ thống retrieval
+        # Dùng để tìm dữ liệu liên quan trong vector DB
         retriever_engine = HybridRetriever(
-            index_path=str(INDEX_PATH), 
-            meta_path=str(META_PATH), 
+            index_path=str(INDEX_PATH),
+            meta_path=str(META_PATH),
             model=model
         )
-        ollama_client = AsyncClient(host=OLLAMA_URL)
-        logger.info("DATABASE - INFERENCE SẴN SÀNG")
-        yield
-    except Exception as e:
-        logger.error(f"LỖI KHỞI ĐỘNG HỆ THỐNG: {e}")
-        raise e
-    finally:
-        logger.info("TẮT SERVER - GIẢI PHÓNG TÀI NGUYÊN...")
-        retriever_engine = None
-        ollama_client = None
 
+        # Tạo client kết nối Ollama local
+        ollama_client = AsyncClient(host=OLLAMA_URL)
+
+        logger.info("ENGINE READY: Hệ thống đã sẵn sàng.")
+
+        # yield = server bắt đầu chạy
+        yield
+
+    except Exception as e:
+        logger.error(f"LỖI KHỞI ĐỘNG: {e}")
+        raise e
+
+    finally:
+        logger.info("Shutting down server...")
+
+
+# =====================================================
+# 3. TẠO FASTAPI APP
+# =====================================================
 app = FastAPI(
-    title="RAGstudio", 
-    version="5.0", 
-    description="Giáo trình Triết học Mác-Lênin",
+    title="RAGstudio Philosophy",
     lifespan=lifespan
 )
 
+# =====================================================
+# 4. CORS
+# =====================================================
+# Cho phép frontend gọi API từ domain khác
+# "*" = cho phép tất cả
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -62,87 +107,228 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==========================================
-# 3. HỆ THỐNG PROMPT
-# ==========================================
+
+# =====================================================
+# 5. SYSTEM PROMPT
+# =====================================================
+# Prompt ép LLM trả lời đúng format
+# và hạn chế hallucination (ảo giác)
 SYSTEM_INSTRUCTIONS = """
-BẠN LÀ GIẢNG VIÊN CAO CẤP TRIẾT HỌC MÁC-LÊNIN. CHUYÊN NGHIỆP, SẮC SẢO, ĐI THẲNG VÀO VẤN ĐỀ.
+# LỆNH THIẾT QUÂN LUẬT (STRICT SYSTEM DIRECTIVE):
 
-[KỶ LUẬT THÉP - BẮT BUỘC TUÂN THỦ]:
-1. TRẢ LỜI TRỰC TIẾP: Đi ngay vào đáp án. KHÔNG rào trước đón sau, KHÔNG dùng câu dẫn (Ví dụ cấm dùng: "Tôi xin giải thích...", "Theo giáo trình...", "Dựa vào ngữ cảnh...").
-2. CẤM RÒ RỈ TƯ DUY: TUYỆT ĐỐI KHÔNG in ra các từ như "Ý định:", "Phân tích:", "Đáp án:", "Giải thích:", "Kết luận:". 
-3. SỰ THẬT & TRÍCH DẪN: Lấy 100% kiến thức từ [NGỮ CẢNH]. Mọi ý chính phải gắn số trang (Trang X) ở cuối câu. Không có dữ liệu -> Từ chối trả lời.
+Bạn là hệ thống chuyên gia Triết học Mác - Lênin.
+Bạn CHỈ được phép trả lời dựa trên ngữ cảnh được cung cấp.
 
-[CẤU TRÚC TRÌNH BÀY MONG MUỐN]:
-- Chia đoạn văn ngắn gọn, thoáng mắt.
-- Dùng dấu gạch đầu dòng (-) hoặc Bullet points (•) để liệt kê đặc trưng/tính chất.
-- **Bôi đậm** các thuật ngữ cốt lõi để sinh viên dễ nắm bắt.
+Bắt buộc tuân thủ:
+
+1. KHÔNG chào hỏi.
+2. KHÔNG lan man.
+3. KHÔNG tự sáng tạo kiến thức.
+4. CHỈ trả lời đúng 3 phần:
+   - BẢN CHẤT
+   - CƠ CHẾ
+   - Ý NGHĨA
+
+Kết thúc bắt buộc bằng:
+<END>
+
+# FORMAT OUTPUT:
+
+## BẢN CHẤT:
+...
+
+## CƠ CHẾ:
+...
+
+## Ý NGHĨA:
+...
+
+<END>
 """
 
-# ==========================================
-# 4. API ENDPOINT (FULL ASYNC STREAMING)
-# ==========================================
-@app.get("/ask_stream")
-async def ask_stream(query: str = Query(..., min_length=2)):
+
+# =====================================================
+# 6. API STREAMING
+# =====================================================
+# Endpoint:
+# POST /ask_stream
+#
+# Client gửi:
+# {
+#    "query": "Câu hỏi ..."
+# }
+@app.post("/ask_stream")
+async def ask_stream(query: str = Body(..., embed=True)):
+
+    # Nếu model chưa load xong
     if not retriever_engine or not ollama_client:
-        return StreamingResponse(iter(["Hệ thống AI chưa sẵn sàng. Vui lòng thử lại sau."]), media_type="text/plain")
-   
-    logger.info(f"Processing Query: '{query}'") 
+        return StreamingResponse(
+            iter(["Hệ thống chưa sẵn sàng."]),
+            media_type="text/plain"
+        )
 
-    # RANKING TOP 5 
-    docs = retriever_engine.search(query, top_k=5)
+    # =================================================
+    # BƯỚC 1: RETRIEVAL
+    # =================================================
+    # Tìm top 4 đoạn liên quan nhất
+    docs = retriever_engine.search(query, top_k=4)
+
+    # Nếu không tìm thấy dữ liệu
     if not docs:
-        return StreamingResponse(iter(["Không tìm thấy tài liệu liên quan trong giáo trình."]), media_type="text/plain")
+        return StreamingResponse(
+            iter(["Dữ liệu giáo trình không có thông tin này."]),
+            media_type="text/plain"
+        )
 
-    context_text = "\n\n".join([f"--- NGUỒN TRANG {d['page']} ---\n{d['text']}" for d in docs])
-    pages = sorted(list(set([d['page'] for d in docs])))
+    # =================================================
+    # BƯỚC 2: LOẠI BỎ DOCUMENT TRÙNG
+    # =================================================
+    unique_docs = []
+    seen_content = set()
 
-    # USER PROMPT TỐI ƯU HÓA
+    for d in docs:
+
+        # Lấy 60 ký tự đầu để kiểm tra trùng
+        content_snippet = d['text'][:60].strip()
+
+        # Nếu chưa xuất hiện
+        if content_snippet not in seen_content:
+
+            unique_docs.append(d)
+
+            # Đánh dấu đã thấy
+            seen_content.add(content_snippet)
+
+    # =================================================
+    # BƯỚC 3: GHÉP CONTEXT
+    # =================================================
+    # Format context đưa vào LLM
+    context_text = "\n\n".join([
+        f"--- TRANG {d['page']} ---\n{d['text']}"
+        for d in unique_docs
+    ])
+
+    # Lấy danh sách page nguồn
+    pages = sorted(list(set([
+        d['page']
+        for d in unique_docs
+    ])))
+
+    # =================================================
+    # BƯỚC 4: STREAM RESPONSE TỪ LLM
+    # =================================================
     async def event_generator():
+
+        # Prompt cuối cùng gửi cho model
         user_prompt = f"""
 [NGỮ CẢNH GIÁO TRÌNH]:
 {context_text}
 
-[CÂU HỎI CỦA NGƯỜI DÙNG]:
+[CÂU HỎI]:
 {query}
 """
+
         try:
-            # SỬ DỤNG ASYNC CLIENT ĐỂ KHÔNG BLOCK FASTAPI
+
+            # Gọi Ollama stream
             stream = await ollama_client.chat(
+
                 model=LLM_MODEL,
+
                 messages=[
-                    {'role': 'system', 'content': SYSTEM_INSTRUCTIONS.strip()},
-                    {'role': 'user', 'content': user_prompt.strip()}
+                    {
+                        'role': 'system',
+                        'content': SYSTEM_INSTRUCTIONS.strip()
+                    },
+                    {
+                        'role': 'user',
+                        'content': user_prompt.strip()
+                    }
                 ],
+
+                # Stream token realtime
                 stream=True,
+
+                # Tham số sinh text
                 options={
-                    "temperature": 0.05, # GIẢM HALLUCINATION 
-                    "top_p": 0.85,       # CẮT TOKEN KHÔNG CẦN THIẾT
-                    "num_ctx": 4096,
-                    "repeat_penalty": 1.15 # NGĂN LẶP LẠI
+
+                    # temperature thấp
+                    # -> output ổn định hơn
+                    "temperature": 0.0,
+
+                    # Giới hạn randomness
+                    "top_p": 0.1,
+
+                    # Giảm lặp từ
+                    "repeat_penalty": 1.15,
+
+                    # Phạt việc lặp nội dung cũ
+                    "presence_penalty": 0.5,
+
+                    # Số token tối đa sinh ra
+                    "num_predict": 400,
+
+                    # Stop token
+                    # gặp sẽ dừng generate
+                    "stop": [
+                        "<END>",
+                        "User:",
+                        "###",
+                        "</s>",
+                        "<|im_end|>"
+                    ]
                 }
             )
-            
+
+            # =============================================
+            # STREAM TỪNG CHUNK VỀ CLIENT
+            # =============================================
             async for chunk in stream:
+
+                # Lấy text model vừa sinh
                 content = chunk['message']['content']
+
                 if content:
+
+                    # Gửi text realtime về frontend
                     yield content
-                    # EVENT STREAMING TẠM NGHỈ
-                    await asyncio.sleep(0.005) 
-                    
+
+                    # Delay cực nhỏ
+                    # giúp stream mượt hơn
+                    await asyncio.sleep(0.001)
+
+            # =============================================
+            # GỬI SOURCE PAGE
+            # =============================================
             if pages:
                 yield f"\n\n<SOURCES>{','.join(map(str, pages))}</SOURCES>"
-                
-        except asyncio.TimeoutError:
-            logger.error("LLM Timeout.")
-            yield "\n\n[Lỗi: Mô hình phản hồi quá lâu.]"
+
         except Exception as e:
+
             logger.error(f"Inference Error: {e}")
-            yield f"\n\n[Lỗi hệ thống trong quá trình sinh văn bản.]"
 
-    return StreamingResponse(event_generator(), media_type="text/plain")
+            yield f"\n\n[Lỗi kết nối mô hình: {str(e)}]"
 
+    # Trả response dạng stream realtime
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/plain"
+    )
+
+
+# =====================================================
+# 7. CHẠY SERVER
+# =====================================================
 if __name__ == "__main__":
+
     import uvicorn
-    # DÙNG ĐỂ CHẠY SEVER FASTAPI VỚI TÍNH NĂNG RELOAD KHI CODE THAY ĐỔI
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+
+    # Chạy FastAPI tại:
+    # http://127.0.0.1:8000
+    uvicorn.run(
+        "server:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True
+    )
+

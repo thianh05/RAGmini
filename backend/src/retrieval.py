@@ -4,94 +4,302 @@ import json
 import os
 import re
 import logging
+
+# Typing cho code dễ đọc hơn
 from typing import List, Dict, Any
+
+# BM25 keyword search
 from rank_bm25 import BM25Okapi
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
+# =====================================================
+# 1. LOGGING
+# =====================================================
+# Hiển thị log ra terminal
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s'
+)
+
+
+# =====================================================
+# 2. HYBRID RETRIEVER
+# =====================================================
+# Retriever kết hợp:
+# - Dense Search (FAISS Vector)
+# - Sparse Search (BM25 Keyword)
+#
+# => giúp tìm:
+#    + đúng ngữ nghĩa
+#    + đúng từ khóa
 class HybridRetriever:
-    # HYBRID SEARCH: Kết hợp Vector Search (FAISS) + Keyword Search (BM25) với thuật toán RRF.
-    def __init__(self, index_path: str, meta_path: str, model: Any):
-        # KIỂM TRA FILE INDEX + METADATA
+
+    # =================================================
+    # KHỞI TẠO
+    # =================================================
+    def __init__(
+        self,
+        index_path: str,
+        meta_path: str,
+        model: Any
+    ):
+
+        # Kiểm tra file index và metadata tồn tại
         if not os.path.exists(index_path) or not os.path.exists(meta_path):
-            raise FileNotFoundError("FAISS INDEX hoặc METADATA không tồn tại. Chạy embedding trước.")
-        
-        # 1 - LOAD FAISS INDEX
+            raise FileNotFoundError(
+                "FAISS INDEX hoặc METADATA không tồn tại. Chạy embedding trước."
+            )
+
+        # =================================================
+        # LOAD FAISS INDEX
+        # =================================================
         logging.info(f"NẠP FAISS INDEX từ: {index_path}")
+
+        # Load vector database
         self.index = faiss.read_index(str(index_path))
-        
-        # 2 - LOAD METADATA
+
+        # =================================================
+        # LOAD METADATA
+        # =================================================
         logging.info("NẠP METADATA...")
+
         with open(meta_path, 'r', encoding='utf-8') as f:
+
+            # metadata chứa:
+            # text, page, source,...
             self.metadata = json.load(f)
-        
+
+        # Embedding model
         self.model = model
-        self.corpus = [item.get('text', '') for item in self.metadata]
-        
-        # 3 - KHỞI TẠO BM25
+
+        # =================================================
+        # TẠO CORPUS
+        # =================================================
+        # Lấy toàn bộ text document
+        self.corpus = [
+            item.get('text', '')
+            for item in self.metadata
+        ]
+
+        # =================================================
+        # BM25 INDEX
+        # =================================================
         logging.info("XÂY DỰNG INVERTED INDEX cho BM25...")
-        tokenized_corpus = [self._tokenize(doc) for doc in self.corpus]
+
+        # Tokenize từng document
+        tokenized_corpus = [
+            self._tokenize(doc)
+            for doc in self.corpus
+        ]
+
+        # Xây BM25 index
         self.bm25 = BM25Okapi(tokenized_corpus)
-        
+
         logging.info("HYBRID SEARCH READY.")
 
+    # =================================================
+    # TOKENIZER
+    # =================================================
+    # Chuẩn hóa text cho BM25
     def _tokenize(self, text: str) -> List[str]:
-        """Tiền xử lý văn bản: lowercase + remove ký tự đặc biệt"""
+
+        # Chuyển về chữ thường
         text = text.lower()
+
+        # Xóa ký tự đặc biệt
         text = re.sub(r'[^\w\s]', ' ', text)
+
+        # Tách thành list token
         return text.split()
 
-    def search(self, query: str, top_k: int = 4, alpha: float = 0.5) -> List[Dict[str, Any]]:
-        """
-        TÌM KIẾM LAI:
-        alpha = 0.5 (cân bằng), >0.5 ưu tiên VECTOR, <0.5 ưu tiên KEYWORD
-        """
-        recall_size = top_k * 3  # POOL ban đầu để fusion RRF
+    # =================================================
+    # SEARCH
+    # =================================================
+    def search(
+        self,
+        query: str,
+        top_k: int = 4,
+        alpha: float = 0.7
+    ) -> List[Dict[str, Any]]:
 
-        # ==========================================
-        # PHASE 1: DENSE RETRIEVAL (VECTOR)
-        # ==========================================
+        """
+        Hybrid Search Pipeline
+
+        top_k:
+            số document trả về cuối cùng
+
+        alpha:
+            trọng số ưu tiên vector search
+
+            alpha = 0.7
+            -> 70% dense search
+            -> 30% BM25
+
+        recall_size:
+            lấy nhiều candidate hơn
+            rồi mới rerank bằng RRF
+        """
+
+        # =================================================
+        # RECALL SIZE
+        # =================================================
+        # Ví dụ:
+        # top_k = 4
+        # recall_size = 20
+        #
+        # => lấy 20 doc trước
+        # => fusion + rerank
+        # => chọn 4 doc cuối
+        recall_size = top_k * 5
+
+        # =================================================
+        # PHASE 1: DENSE RETRIEVAL (VECTOR SEARCH)
+        # =================================================
+
+        # Prefix query:
+        # nhiều embedding model cần format:
+        # "query: ..."
         processed_query = f"query: {query}"
-        query_vec = self.model.encode([processed_query], convert_to_numpy=True).astype(np.float32)
-        faiss.normalize_L2(query_vec)  # CHUẨN HÓA L2
-        vector_distances, faiss_indices = self.index.search(query_vec, recall_size)
 
-        # ==========================================
+        # Encode query -> vector
+        query_vec = self.model.encode(
+            [processed_query],
+            convert_to_numpy=True
+        ).astype(np.float32)
+
+        # Normalize vector
+        # giúp cosine similarity chính xác hơn
+        faiss.normalize_L2(query_vec)
+
+        # Search trong FAISS
+        #
+        # vector_distances:
+        #   độ tương đồng
+        #
+        # faiss_indices:
+        #   index document
+        vector_distances, faiss_indices = self.index.search(
+            query_vec,
+            recall_size
+        )
+
+        # =================================================
         # PHASE 2: SPARSE RETRIEVAL (BM25)
-        # ==========================================
+        # =================================================
+
+        # Tokenize query
         tokenized_query = self._tokenize(query)
+
+        # Tính điểm BM25
         bm25_scores = self.bm25.get_scores(tokenized_query)
-        bm25_indices = np.argsort(bm25_scores)[::-1][:recall_size]
 
-        # ==========================================
+        # Sắp xếp giảm dần
+        # lấy top recall_size
+        bm25_indices = np.argsort(
+            bm25_scores
+        )[::-1][:recall_size]
+
+        # =================================================
         # PHASE 3: RRF FUSION
-        # ==========================================
+        # =================================================
+        # Reciprocal Rank Fusion
+        #
+        # Kết hợp:
+        # - vector ranking
+        # - keyword ranking
+        #
+        # Công thức:
+        # score = 1 / (k + rank)
+        #
+        # rank càng cao -> score càng lớn
         rrf_scores = {}
-        k_constant = 60  # Hằng số RRF chuẩn
 
-        # VECTOR
+        # Hằng số giảm ảnh hưởng rank
+        k_constant = 60
+
+        # =================================================
+        # VECTOR RANKING
+        # =================================================
         for rank, doc_idx in enumerate(faiss_indices[0]):
-            if doc_idx == -1: continue
-            rrf_scores[doc_idx] = rrf_scores.get(doc_idx, 0.0) + alpha * (1.0 / (k_constant + rank + 1))
-        
-        # KEYWORD
-        for rank, doc_idx in enumerate(bm25_indices):
-            if bm25_scores[doc_idx] <= 0: continue
-            rrf_scores[doc_idx] = rrf_scores.get(doc_idx, 0.0) + (1.0 - alpha) * (1.0 / (k_constant + rank + 1))
 
-        # ==========================================
-        # PHASE 4: RERANK + RETURN
-        # ==========================================
-        sorted_indices = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+            # -1 = không có kết quả
+            if doc_idx == -1:
+                continue
+
+            # Cộng điểm RRF
+            rrf_scores[doc_idx] = (
+                rrf_scores.get(doc_idx, 0.0)
+                +
+                alpha * (
+                    1.0 / (k_constant + rank + 1)
+                )
+            )
+
+        # =================================================
+        # KEYWORD RANKING
+        # =================================================
+        for rank, doc_idx in enumerate(bm25_indices):
+
+            # Score <= 0
+            # nghĩa là keyword không match
+            if bm25_scores[doc_idx] <= 0:
+                continue
+
+            # Cộng điểm BM25 vào RRF
+            rrf_scores[doc_idx] = (
+                rrf_scores.get(doc_idx, 0.0)
+                +
+                (1.0 - alpha) * (
+                    1.0 / (k_constant + rank + 1)
+                )
+            )
+
+        # =================================================
+        # PHASE 4: RERANK + FILTER
+        # =================================================
+
+        # Sort document theo điểm RRF giảm dần
+        sorted_indices = sorted(
+            rrf_scores.keys(),
+            key=lambda x: rrf_scores[x],
+            reverse=True
+        )
+
         results = []
 
+        # =================================================
+        # DUYỆT KẾT QUẢ
+        # =================================================
         for idx in sorted_indices:
+
+            # Lấy document metadata
             doc = self.metadata[idx]
-            if len(doc.get('text', '')) >= 50:  # LOẠI BỎ RÁC
+
+            # =============================================
+            # FILTER DOCUMENT QUÁ NGẮN
+            # =============================================
+            # < 80 ký tự:
+            # thường thiếu context
+            #
+            # => dễ làm LLM hallucination
+            if len(doc.get('text', '')) >= 80:
+
+                # Copy document
                 doc_copy = doc.copy()
-                doc_copy['rrf_score'] = round(rrf_scores[idx], 6)
+
+                # Gắn thêm điểm RRF
+                doc_copy['rrf_score'] = round(
+                    rrf_scores[idx],
+                    6
+                )
+
                 results.append(doc_copy)
-            if len(results) == top_k: 
+
+            # Đủ top_k thì dừng
+            if len(results) == top_k:
                 break
-                
+
+        # =================================================
+        # RETURN
+        # =================================================
         return results
