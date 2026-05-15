@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [FRONTEND] - %(mes
 # 1. CẤU HÌNH TRANG RAGstudio
 # ==========================================
 st.set_page_config(
-    page_title="RAGstudio", 
+    page_title="Noesis", 
     layout="centered", 
     page_icon="📎"
 )

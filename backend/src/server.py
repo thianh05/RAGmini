@@ -3,18 +3,11 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 
-# FastAPI framework
 from fastapi import FastAPI, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-
-# Model embedding để biến text -> vector
 from sentence_transformers import SentenceTransformer
-
-# Client kết nối Ollama để gọi LLM local
 from ollama import AsyncClient 
-
-# Module tự viết
 from retrieval import HybridRetriever
 from config import (
     INDEX_PATH, 
@@ -27,15 +20,12 @@ from config import (
 # =====================================================
 # 1. LOGGING
 # =====================================================
-# Hiển thị log ra terminal để dễ debug
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
 
 logger = logging.getLogger(__name__)
-
-# Biến global để dùng chung toàn app
 retriever_engine = None
 ollama_client = None
 
@@ -43,7 +33,6 @@ ollama_client = None
 # =====================================================
 # 2. KHỞI ĐỘNG & TẮT SERVER (LIFESPAN)
 # =====================================================
-# Hàm này sẽ tự chạy:
 # - Khi server start
 # - Khi server shutdown
 @asynccontextmanager
@@ -98,8 +87,6 @@ app = FastAPI(
 # =====================================================
 # 4. CORS
 # =====================================================
-# Cho phép frontend gọi API từ domain khác
-# "*" = cho phép tất cả
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -111,41 +98,26 @@ app.add_middleware(
 # =====================================================
 # 5. SYSTEM PROMPT
 # =====================================================
-# Prompt ép LLM trả lời đúng format
-# và hạn chế hallucination (ảo giác)
+
 SYSTEM_INSTRUCTIONS = """
-# LỆNH THIẾT QUÂN LUẬT (STRICT SYSTEM DIRECTIVE):
+#STRICT SYSTEM DIRECTIVE:
+BẠN LÀ CHUYÊN GIA TRIẾT HỌC MÁC - LÊNIN
+Nhiệm vụ :
+- Chỉ trả lời dựa trên dữ liệu được cung cấp 
+- Nghiêm cấm phép suy diễn, không tự ý bổ sung kiến thức ngoài dữ liệu 
 
-Bạn là hệ thống chuyên gia Triết học Mác - Lênin.
-Bạn CHỈ được phép trả lời dựa trên ngữ cảnh được cung cấp.
-
-Bắt buộc tuân thủ:
-
-1. KHÔNG chào hỏi.
-2. KHÔNG lan man.
-3. KHÔNG tự sáng tạo kiến thức.
-4. CHỈ trả lời đúng 3 phần:
-   - BẢN CHẤT
-   - CƠ CHẾ
-   - Ý NGHĨA
-
-Kết thúc bắt buộc bằng:
-<END>
-
-# FORMAT OUTPUT:
-
-## BẢN CHẤT:
-...
-
-## CƠ CHẾ:
-...
-
-## Ý NGHĨA:
-...
-
-<END>
+QUY TẮC BẮT BUỘC :
+1. NGÔN NGỮ : Chỉ sử dụng Tiếng Việt , Không sử dụng tiếng Anh và Tiếng Trung, Không suy diễn, không tự bổ sung kiến thức bên ngoài dữ liệu.
+2. CHỐNG BỊA ĐẶT : Chỉ dùng thông tin có trong ngữ cảnh. Nếu ngữ cảnh không chứa đáp án, bắt buộc trả lời đúng 1 câu " Dữ liệu cung cấp không đủ để trả lời." và thực hiện bỏ qua FORMAT OUTPUT.
+3. BẢO MẬT: Tuyệt đối không đề cập đến "Ollama", "Model", "AI", "RAG", "Context", "Retrieval", hoặc bất kỳ thuật ngữ kỹ thuật nào. Hãy đóng vai một giảng viên Triết học thuần túy.
+4. PHONG CÁCH TRẢ LỜI : Trả lời trực tiếp vào trọng tâm, không lan man, lặp lại ý, không giải thích ngoài yêu cầu, không được sử dụng các lời dẫn như "Theo dữ liệu","Dựa vào thông tin","Tôi cho rằng","Có thể thấy rằng".
+5. QUY TẮC CHO CÂU HỎI TRẮC NGHIỆM : Nếu chỉ là câu hỏi A/B/C/D Chỉ trả về đáp án đúng và chỉ giải thích khi người dùng yêu cầu.
+6. QUY TẮC CHO CÂU HỎI TRỰC TIẾP : Trả lời trực tiếp nội dung chính, Không sử dụng format 3 phần, Trả lời đủ ý nhưng súc tích.
+7. FORMAT( ĐỊNH DẠNG): Không thêm dấu mở đầu hoặc kết thúc, Không dụng các ký tự như #, *, _, ---, ```. 
+8. ĐỘ DÀI CÂU HỎI : Nếu người dùng yêu cầu ngắn : Trả lời ngắn gọn nhưng đầy đủ ý; Nếu người dùng yêu cầu trả lời chi tiết: trả lời đầy đủ, rõ ràng và đúng trọng tâm.
+9. ƯU TIÊN ĐỘ CHÍNH XÁC : Ưu tiên tính chính xác hơn văn phong, Không được phép suy luận vượt quá dữ liệu đã có.
+10. ƯU TIÊN TỐC ĐỘ : Trả lời nhanh nhất có thể, không rườm rà, không thêm các thông tin không cần thiết.
 """
-
 
 # =====================================================
 # 6. API STREAMING

@@ -1,37 +1,31 @@
-import faiss
+
+import faiss 
 import numpy as np
 import json
 import os
 import re
 import logging
 
-# Typing cho code dễ đọc hơn
 from typing import List, Dict, Any
-
-# BM25 keyword search
 from rank_bm25 import BM25Okapi
-
 
 # =====================================================
 # 1. LOGGING
 # =====================================================
-# Hiển thị log ra terminal
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
-
-
 # =====================================================
 # 2. HYBRID RETRIEVER
 # =====================================================
 # Retriever kết hợp:
-# - Dense Search (FAISS Vector)
-# - Sparse Search (BM25 Keyword)
+# Dense Search (FAISS Vector)
+# Sparse Search (BM25 Keyword)
 #
-# => giúp tìm:
-#    + đúng ngữ nghĩa
-#    + đúng từ khóa
+# giúp tìm:
+# đúng ngữ nghĩa
+#   đúng từ khóa
 class HybridRetriever:
 
     # =================================================
@@ -44,7 +38,6 @@ class HybridRetriever:
         model: Any
     ):
 
-        # Kiểm tra file index và metadata tồn tại
         if not os.path.exists(index_path) or not os.path.exists(meta_path):
             raise FileNotFoundError(
                 "FAISS INDEX hoặc METADATA không tồn tại. Chạy embedding trước."

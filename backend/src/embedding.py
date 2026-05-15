@@ -3,19 +3,12 @@ import logging
 import os
 import time
 
-# PyTorch dùng để kiểm tra GPU CUDA
 import torch
-
-# FAISS dùng làm vector database
 import faiss
-
-# Xử lý vector
 import numpy as np
 
-# Embedding model
 from sentence_transformers import SentenceTransformer
 
-# Config project
 from config import (
     CHUNK_JSON,
     INDEX_PATH,
@@ -24,43 +17,32 @@ from config import (
 )
 
 
-# =====================================================
-# 1. LOGGING
-# =====================================================
-# Hiển thị log hệ thống
+# [1] Cấu hình logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
 
 
-# =====================================================
-# 2. VECTOR INDEXER
-# =====================================================
-# Class chịu trách nhiệm:
-#
-# - Load chunk dữ liệu
-# - Encode text -> vector
-# - Build FAISS index
-# - Save vector database
 class VectorIndexer:
 
-    # =================================================
-    # INIT
-    # =================================================
+    """
+    Pipeline vector database:
+
+    1. Load chunk data
+    2. Encode text thành vector
+    3. Normalize embedding
+    4. Build FAISS index
+    5. Lưu vector database
+    """
+
+    # [2] Khởi tạo vector indexer
     def __init__(
         self,
         model_name: str = EMBEDDING_MODEL
     ):
 
-        # =============================================
-        # KIỂM TRA GPU CUDA
-        # =============================================
-        # Nếu có GPU:
-        # -> dùng cuda
-        #
-        # Không có:
-        # -> dùng cpu
+        # [2.1] Chọn thiết bị xử lý
         self.device = (
             'cuda'
             if torch.cuda.is_available()
@@ -68,26 +50,23 @@ class VectorIndexer:
         )
 
         logging.info(
-            f"KHỞI ĐỘNG {self.device.upper()}"
+            f"Khởi động trên "
+            f"{self.device.upper()}"
         )
 
-        # =============================================
-        # LOAD EMBEDDING MODEL
-        # =============================================
+        # [2.2] Load embedding model
         self.model = SentenceTransformer(
             model_name,
             device=self.device
         )
 
-        # FAISS index
+        # [2.3] Khởi tạo FAISS index
         self.index = None
 
-        # Metadata document
+        # [2.4] Metadata document
         self.metadata = []
 
-    # =================================================
-    # BUILD VECTOR DATABASE
-    # =================================================
+    # [3] Build vector database
     def build_database(
         self,
         input_json: str,
@@ -95,23 +74,19 @@ class VectorIndexer:
         meta_out: str
     ):
 
-        # =================================================
-        # STEP 1: KIỂM TRA FILE INPUT
-        # =================================================
+        # [3.1] Kiểm tra file input
         if not os.path.exists(input_json):
 
             logging.critical(
-                f"ERROR : KHÔNG TÌM THẤY FILE "
-                f"{input_json} > CHẠY CHUNK TRƯỚC"
+                f"Không tìm thấy file "
+                f"{input_json}"
             )
 
             return
 
-        # =================================================
-        # LOAD JSON DATA
-        # =================================================
+        # [3.2] Load chunk metadata
         logging.info(
-            f"NẠP DỮ LIỆU TỪ {input_json}"
+            f"Nạp dữ liệu từ {input_json}"
         )
 
         with open(
@@ -120,26 +95,18 @@ class VectorIndexer:
             encoding='utf-8'
         ) as f:
 
-            # metadata chứa:
-            # text, page, source,...
             self.metadata = json.load(f)
 
-        # =================================================
-        # KIỂM TRA JSON RỖNG
-        # =================================================
+        # [3.3] Kiểm tra dữ liệu rỗng
         if not self.metadata:
 
             logging.warning(
-                "ERROR : FILE JSON KHÔNG CÓ DỮ LIỆU"
+                "File JSON không có dữ liệu"
             )
 
             return
 
-        # =================================================
-        # PREPARE TEXT
-        # =================================================
-        # Format chuẩn cho model E5:
-        # "passage: ..."
+        # [3.4] Chuẩn bị text cho embedding model
         texts = [
 
             f"passage: {chunk['text']}"
@@ -147,101 +114,75 @@ class VectorIndexer:
             for chunk in self.metadata
         ]
 
-        # =================================================
-        # STEP 2: ENCODING
-        # =================================================
+        # [3.5] Encode text thành vector
         logging.info(
-            f"ÉP XUNG MÃ HÓA "
-            f"{len(texts)} CHUNKS "
-            f"- PHÂN BỔ BATCH SIZE"
+            f"Đang encode "
+            f"{len(texts)} chunks"
         )
 
         start_time = time.time()
 
-        # =================================================
-        # STEP 3: TEXT -> VECTOR
-        # =================================================
         embeddings = self.model.encode(
 
-            # Danh sách text
+            # Danh sách text input
             texts,
 
-            # Batch size lớn
-            # -> encode nhanh hơn
+            # Batch encode để tăng tốc
             batch_size=64,
 
-            # Hiện progress bar
+            # Hiển thị progress bar
             show_progress_bar=True,
 
             # Output numpy array
             convert_to_numpy=True
         )
 
-        # =================================================
-        # STEP 4: NORMALIZE VECTOR
-        # =================================================
-        # Normalize L2:
-        #
-        # giúp:
-        # cosine similarity chính xác hơn
-        #
+        # [3.6] Normalize vector embedding
         # Sau normalize:
-        # inner product ~= cosine similarity
-        faiss.normalize_L2(embeddings)
+        # Inner Product ≈ Cosine Similarity
+        faiss.normalize_L2(
+            embeddings
+        )
 
         encode_time = time.time() - start_time
 
         logging.info(
-            f"TÍNH TOÁN TRONG "
-            f"{encode_time:.2f} GIÂY "
-            f"- CHIỀU VECTOR: {embeddings.shape[1]}"
+            f"Encode hoàn tất trong "
+            f"{encode_time:.2f}s"
         )
 
-        # =================================================
-        # STEP 5: KHỞI TẠO FAISS INDEX
-        # =================================================
+        logging.info(
+            f"Vector dimension: "
+            f"{embeddings.shape[1]}"
+        )
 
-        # Số chiều vector
+        # [3.7] Khởi tạo FAISS index
         dimension = embeddings.shape[1]
 
-        # =============================================
-        # IndexFlatIP
-        # =============================================
-        # IP = Inner Product
-        #
-        # Vì vector đã normalize:
-        # -> IP ≈ Cosine Similarity
-        #
-        # Ưu điểm:
-        # - đơn giản
-        # - chính xác
-        # - phù hợp dataset vừa và nhỏ
+        # IndexFlatIP:
+        # dùng inner product search
         self.index = faiss.IndexFlatIP(
             dimension
         )
 
-        # Add toàn bộ vector vào FAISS
-        self.index.add(embeddings)
+        # [3.8] Add vector vào index
+        self.index.add(
+            embeddings
+        )
 
-        # =================================================
-        # TẠO THƯ MỤC OUTPUT
-        # =================================================
+        # [3.9] Tạo thư mục output
         os.makedirs(
             os.path.dirname(index_out),
             exist_ok=True
         )
 
-        # =================================================
-        # STEP 6: SAVE DATABASE
-        # =================================================
-
-        # Save FAISS index
+        # [3.10] Lưu FAISS index
         faiss.write_index(
             self.index,
             str(index_out)
         )
 
-        # Save metadata JSON
+        # [3.11] Lưu metadata
         with open(
             meta_out,
             'w',
@@ -255,50 +196,48 @@ class VectorIndexer:
                 indent=2
             )
 
-        # =================================================
-        # SUCCESS LOG
-        # =================================================
-        logging.info("======")
-
+        # [3.12] Log kết quả
         logging.info(
-            "TRIỂN KHAI VECTOR DATABASE THÀNH CÔNG !"
+            "Build vector database thành công"
         )
 
         logging.info(
-            f"VECTORS: {self.index.ntotal}"
+            f"Tổng vectors: "
+            f"{self.index.ntotal}"
         )
 
         logging.info(
-            f"FILE FAISS INDEX: {index_out}"
+            f"FAISS index -> "
+            f"{index_out}"
         )
 
         logging.info(
-            f"FILE METADATA: {meta_out}"
+            f"Metadata -> "
+            f"{meta_out}"
         )
 
 
-# =====================================================
-# 3. MAIN EXECUTION
-# =====================================================
-# File chạy trực tiếp:
-#
-# python embed.py
+# [4] Main execution
 if __name__ == "__main__":
 
     try:
 
-        # Khởi tạo indexer
+        # [4.1] Khởi tạo indexer
         indexer = VectorIndexer()
 
-        # Build vector database
+        # [4.2] Build vector database
         indexer.build_database(
+
             str(CHUNK_JSON),
+
             str(INDEX_PATH),
+
             str(META_PATH)
         )
 
     except Exception as e:
 
+        # [4.3] Xử lý lỗi hệ thống
         logging.critical(
-            f"ERROR: LỖI FATAL {str(e)}"
+            f"Lỗi pipeline -> {str(e)}"
         )

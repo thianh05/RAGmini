@@ -1,571 +1,266 @@
+from asyncio import WindowsSelectorEventLoopPolicy
 import json
 import logging
 import re
-import numpy as np
-import torch
 import hashlib
+import torch
+import numpy as np
 
-# Typing cho code rõ ràng hơn
 from typing import List, Dict, Any
-
-# Embedding model
 from sentence_transformers import SentenceTransformer
-
-# Tính cosine similarity
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Config project
 from config import (
     CLEAN_JSON,
     CHUNK_JSON,
-    EMBEDDING_MODEL
+    EMBEDDING_MODEL,
 )
 
-
-# =====================================================
-# 1. LOGGING
-# =====================================================
+# 1. Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
 
-
-# =====================================================
-# 2. SEMANTIC DOCUMENT CHUNKER
-# =====================================================
-# Class chịu trách nhiệm:
-#
-# - Tách câu
-# - Phân tích ngữ nghĩa
-# - Chia semantic chunk
-# - Kiểm soát độ dài chunk
-# - Xuất dữ liệu chuẩn hóa
 class SemanticDocumentChunker:
 
-    # =================================================
-    # INIT
-    # =================================================
-    def __init__(
-        self,
-        model_name: str = EMBEDDING_MODEL,
-        breakpoint_percentile: int = 85
-    ):
+    # Tách câu > Semantic Chunking > Kiểm soát độ dài chunk
+    def __init__(self, model_name: str = EMBEDDING_MODEL, break_percentile: int = 85):
 
-        # =============================================
-        # CHỌN DEVICE
-        # =============================================
-        # Có CUDA:
-        # -> dùng GPU
-        #
-        # Không có:
-        # -> dùng CPU
-        self.device = (
-            'cuda'
-            if torch.cuda.is_available()
-            else 'cpu'
-        )
+        # Chọn device
+        self.device = ('cuda' if torch.cuda.is_available() else 'cpu')
+        logging.info(f"Semantic Engine -> {self.device.upper()}")
 
-        logging.info(
-            f"Khởi tạo Semantic Engine "
-            f"trên phân vùng: {self.device.upper()}"
-        )
+        # Load Embedding Model
+        self.model = SentenceTransformer(model_name, device=self.device)
 
-        # =============================================
-        # LOAD EMBEDDING MODEL
-        # =============================================
-        self.model = SentenceTransformer(
-            model_name,
-            device=self.device
-        )
-
-        # =============================================
-        # BREAKPOINT PERCENTILE
-        # =============================================
-        # Ngưỡng xác định:
-        # "2 câu khác chủ đề"
-        #
-        # Ví dụ:
-        # percentile = 85
-        # -> chỉ cắt khi độ lệch semantic rất lớn
-        self.breakpoint_percentile = breakpoint_percentile
-
-        # =============================================
-        # MAX CHUNK LENGTH
-        # =============================================
-        # Giới hạn ký tự mỗi chunk
-        #
-        # tránh:
-        # - chunk quá dài
-        # - vượt context
-        # - tốn VRAM
+        self.break_percentile = break_percentile
         self.max_chunk_length = 1000
 
-    # =================================================
-    # TÁCH CÂU + GẮN METADATA
-    # =================================================
-    def _split_into_sentences_with_meta(
-        self,
-        pages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    # 2. Tách câu + Metadata
+    def _split_into_sentences(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         sentences_meta = []
 
-        # =============================================
-        # DUYỆT TỪNG TRANG
-        # =============================================
         for page in pages:
 
             text = page.get("text", "")
+            page_num = page.get("page", "Unknown")
 
-            page_num = page.get(
-                "page",
-                "Unknown"
-            )
+            # Tách câu
+            raw_sentences = re.split(r'(?<=[.!?])\s+', text)
 
-            # =========================================
-            # TÁCH CÂU TIẾNG VIỆT
-            # =========================================
-            # Regex:
-            # tách sau dấu . ! ?
-            raw_sentences = re.split(
-                r'(?<=[.!?])\s+',
-                text
-            )
+            for sentence in raw_sentences:
 
-            # =========================================
-            # LỌC CÂU NGẮN
-            # =========================================
-            for s in raw_sentences:
-
-                clean_s = s.strip()
+                clean_sentence = sentence.strip()
 
                 # Bỏ câu quá ngắn
-                if len(clean_s) > 20:
+                if len(clean_sentence) > 20:
 
                     sentences_meta.append({
-
-                        # Nội dung câu
-                        "text": clean_s,
-
-                        # Trang chứa câu
-                        "page": page_num
+                        "text": clean_sentence,
+                        "page": page_num,
                     })
 
         return sentences_meta
 
-    # =================================================
-    # TẠO ID CHUNK
-    # =================================================
-    # Dùng hash MD5:
-    # - text
-    # - danh sách page
-    #
-    # => tạo ID duy nhất
-    def _generate_chunk_id(
-        self,
-        text: str,
-        pages_list: List[Any]
-    ) -> str:
+    # 3. Tạo Chunk ID
+    def _generate_chunk_id(self, text: str, pages_list: List[Any]) -> str:
 
         unique_string = (
-
-            f"pages_"
-            f"{'_'.join(map(str, set(pages_list)))}_"
-            f"{text}"
-
+            f"pages_{'_'.join(map(str, set(pages_list)))}_{text}"
         ).encode('utf-8')
 
-        return hashlib.md5(
-            unique_string
-        ).hexdigest()
+        return hashlib.md5(unique_string).hexdigest()
 
-    # =================================================
-    # SEMANTIC SPLIT
-    # =================================================
-    # Chia chunk dựa trên:
-    # độ khác biệt ngữ nghĩa
-    def _semantic_split(
-        self,
-        sentences_meta: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    # 4. Semantic Chunking
+    def _semantic_split(self, sentences_meta: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
-        # =============================================
-        # TRƯỜNG HỢP QUÁ ÍT CÂU
-        # =============================================
+        # Nếu quá ít câu -> gom luôn
         if len(sentences_meta) <= 2:
 
             return [{
-                "text": " ".join([
-                    s["text"]
-                    for s in sentences_meta
-                ]),
-
-                "pages": list(set([
-                    s["page"]
-                    for s in sentences_meta
-                ]))
+                "text": " ".join(s["text"] for s in sentences_meta),
+                "pages": list(set(s["page"] for s in sentences_meta))
             }]
 
-        # =================================================
-        # LẤY TOÀN BỘ TEXT
-        # =================================================
-        texts = [
-            s["text"]
-            for s in sentences_meta
-        ]
+        # Lấy text
+        texts = [s["text"] for s in sentences_meta]
 
-        # =================================================
-        # ENCODE SENTENCE -> VECTOR
-        # =================================================
+        # Encode sentence -> vector
         embeddings = self.model.encode(
-
             texts,
-
-            batch_size=64,
-
+            batch_size=32,
             show_progress_bar=False
         )
 
-        # =================================================
-        # TÍNH KHOẢNG CÁCH NGỮ NGHĨA
-        # =================================================
-        # distance = 1 - cosine similarity
-        #
-        # similarity cao:
-        # -> cùng chủ đề
-        #
-        # similarity thấp:
-        # -> khác chủ đề
         distances = []
 
+        # Tính semantic distance
         for i in range(len(embeddings) - 1):
 
-            sim = cosine_similarity(
+            similarity = cosine_similarity(
                 [embeddings[i]],
                 [embeddings[i + 1]]
             )[0][0]
 
-            distances.append(
-                1.0 - sim
-            )
+            distances.append(1.0 - similarity)
 
-        # =================================================
-        # TÍNH NGƯỠNG BREAKPOINT
-        # =================================================
-        # Ví dụ:
-        # percentile=85
-        #
-        # => chỉ cắt khi distance
-        # nằm top 15% lớn nhất
+        # Threshold semantic split
         threshold = np.percentile(
             distances,
-            self.breakpoint_percentile
+            self.break_percentile
         )
 
-        # =================================================
-        # BUILD SEMANTIC CHUNK
-        # =================================================
         chunks_meta = []
 
-        current_texts = [
-            sentences_meta[0]["text"]
-        ]
+        current_texts = [sentences_meta[0]["text"]]
+        current_pages = [sentences_meta[0]["page"]]
 
-        current_pages = [
-            sentences_meta[0]["page"]
-        ]
-
-        # =================================================
-        # DUYỆT TỪNG DISTANCE
-        # =================================================
+        # Build semantic chunks
         for i, distance in enumerate(distances):
 
-            # =============================================
-            # KHÁC CHỦ ĐỀ -> TẠO CHUNK MỚI
-            # =============================================
+            # Khác chủ đề -> tạo chunk mới
             if distance > threshold:
 
                 chunks_meta.append({
-
-                    "text": " ".join(
-                        current_texts
-                    ),
-
-                    # Lưu toàn bộ page liên quan
-                    "pages": list(set(
-                        current_pages
-                    ))
+                    "text": " ".join(current_texts),
+                    "pages": list(set(current_pages))
                 })
 
-                # Reset chunk mới
-                current_texts = [
-                    sentences_meta[i + 1]["text"]
-                ]
+                current_texts = [sentences_meta[i + 1]["text"]]
+                current_pages = [sentences_meta[i + 1]["page"]]
 
-                current_pages = [
-                    sentences_meta[i + 1]["page"]
-                ]
-
-            # =============================================
-            # CÙNG CHỦ ĐỀ -> GỘP
-            # =============================================
+            # Cùng chủ đề -> gộp chunk
             else:
 
-                current_texts.append(
-                    sentences_meta[i + 1]["text"]
-                )
+                current_texts.append(sentences_meta[i + 1]["text"])
+                current_pages.append(sentences_meta[i + 1]["page"])
 
-                current_pages.append(
-                    sentences_meta[i + 1]["page"]
-                )
-
-        # =================================================
-        # ĐÓNG GÓI CHUNK CUỐI
-        # =================================================
+        # Thêm chunk cuối
         if current_texts:
 
             chunks_meta.append({
-
-                "text": " ".join(
-                    current_texts
-                ),
-
-                "pages": list(set(
-                    current_pages
-                ))
+                "text": " ".join(current_texts),
+                "pages": list(set(current_pages))
             })
 
         return chunks_meta
 
-    # =================================================
-    # KIỂM SOÁT ĐỘ DÀI CHUNK
-    # =================================================
-    # Nếu chunk quá dài:
-    # -> chia nhỏ tiếp
-    def _apply_length_control(
-        self,
-        chunks_meta: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    # 5. Kiểm soát độ dài chunk
+    def _apply_length_control(self, chunks_meta: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         final_chunks = []
 
-        # =============================================
-        # DUYỆT TỪNG CHUNK
-        # =============================================
         for chunk_obj in chunks_meta:
 
             chunk_text = chunk_obj["text"]
-
             chunk_pages = chunk_obj["pages"]
 
-            # =========================================
-            # CHUNK HỢP LỆ
-            # =========================================
+            # Chunk hợp lệ
             if len(chunk_text) <= self.max_chunk_length:
 
-                final_chunks.append(
-                    chunk_obj
-                )
+                final_chunks.append(chunk_obj)
 
-            # =========================================
-            # CHUNK QUÁ DÀI
-            # =========================================
+            # Chunk quá dài
             else:
 
-                # Tách lại theo câu
-                sub_sentences = re.split(
-                    r'(?<=[.!?])\s+',
-                    chunk_text
-                )
+                sub_sentences = re.split(r'(?<=[.!?])\s+', chunk_text)
 
                 temp_texts = []
-
                 current_len = 0
 
-                # =====================================
-                # GOM NHÓM THEO ĐỘ DÀI
-                # =====================================
                 for sentence in sub_sentences:
 
                     # Nếu vượt giới hạn
-                    if (
-                        current_len + len(sentence)
-                        > self.max_chunk_length
-                    ):
+                    if (current_len + len(sentence) > self.max_chunk_length):
 
                         final_chunks.append({
-
-                            "text": " ".join(
-                                temp_texts
-                            ),
-
+                            "text": " ".join(temp_texts),
                             "pages": chunk_pages
                         })
 
-                        # overlap nhẹ
-                        # giữ câu cuối
+                        # Overlap
                         temp_texts = temp_texts[-1:]
-
-                        current_len = sum(
-                            len(s)
-                            for s in temp_texts
-                        )
+                        current_len = sum(len(s) for s in temp_texts)
 
                     temp_texts.append(sentence)
-
                     current_len += len(sentence)
 
-                # =====================================
-                # CHUNK CUỐI
-                # =====================================
+                # Chunk cuối
                 if temp_texts:
 
                     final_chunks.append({
-
-                        "text": " ".join(
-                            temp_texts
-                        ),
-
+                        "text": " ".join(temp_texts),
                         "pages": chunk_pages
                     })
 
         return final_chunks
 
-    # =================================================
-    # PIPELINE TOÀN BỘ
-    # =================================================
-    def process_pipeline(
-        self,
-        pages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    # 6. Full Pipeline
+    def process_pipeline(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
-        logging.info(
-            f"BĂM NGỮ NGHĨA XUYÊN TRANG "
-            f"({len(pages)} TRANG)..."
-        )
+        logging.info(f"Processing {len(pages)} pages...")
 
-        # =================================================
-        # STEP 1: TÁCH CÂU
-        # =================================================
-        sentences_meta = (
-            self._split_into_sentences_with_meta(
-                pages
-            )
-        )
+        # Tách câu
+        sentences_meta = self._split_into_sentences(pages)
 
-        # =================================================
-        # STEP 2: SEMANTIC CHUNKING
-        # =================================================
-        semantic_chunks = (
-            self._semantic_split(
-                sentences_meta
-            )
-        )
+        # Semantic Chunking
+        semantic_chunks = self._semantic_split(sentences_meta)
 
-        # =================================================
-        # STEP 3: LENGTH CONTROL
-        # =================================================
-        controlled_chunks = (
-            self._apply_length_control(
-                semantic_chunks
-            )
-        )
+        # Length Control
+        controlled_chunks = self._apply_length_control(semantic_chunks)
 
-        # =================================================
-        # BUILD FINAL OUTPUT
-        # =================================================
+        # Build Output
         results = []
 
         for idx, chunk_obj in enumerate(controlled_chunks):
 
-            # Lấy page chính
             primary_page = (
-
                 chunk_obj["pages"][0]
-
                 if chunk_obj["pages"]
-
                 else "Unknown"
             )
 
             results.append({
 
-                # ID unique
                 "chunk_id": self._generate_chunk_id(
                     chunk_obj["text"],
                     chunk_obj["pages"]
                 ),
 
-                # Trang chính
                 "page": primary_page,
-
-                # Index chunk
                 "chunk_index": idx,
-
-                # Số ký tự
-                "char_count": len(
-                    chunk_obj["text"]
-                ),
-
-                # Nội dung chunk
-                "text": chunk_obj["text"]
+                "char_count": len(chunk_obj["text"]),
+                "text": chunk_obj["text"],
             })
 
-        logging.info(
-            f"ĐÃ XUẤT "
-            f"{len(results)} "
-            f"CHUNKS CHUẨN HÓA."
-        )
+        logging.info(f"Generated {len(results)} chunks")
 
         return results
 
 
-# =====================================================
-# 3. MAIN EXECUTION
-# =====================================================
+# Main Execution
 if __name__ == "__main__":
 
     try:
 
-        # =================================================
-        # LOAD CLEAN DATA
-        # =================================================
-        logging.info(
-            f"NẠP CẤU TRÚC DỮ LIỆU THÔ "
-            f"{CLEAN_JSON}"
-        )
+        # Load clean document
+        logging.info(f"Loading -> {CLEAN_JSON}")
 
-        with open(
-            CLEAN_JSON,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(CLEAN_JSON, "r", encoding="utf-8") as f:
             clean_pages = json.load(f)
 
-        # =================================================
-        # INIT CHUNKER
-        # =================================================
+        # Initialize Chunker
         chunker = SemanticDocumentChunker(
-            breakpoint_percentile=85
+            break_percentile=85
         )
 
-        # =================================================
-        # PROCESS PIPELINE
-        # =================================================
-        chunks = chunker.process_pipeline(
-            clean_pages
-        )
+        # Run Pipeline
+        chunks = chunker.process_pipeline(clean_pages)
 
-        # =================================================
-        # SAVE CHUNK JSON
-        # =================================================
-        with open(
-            CHUNK_JSON,
-            "w",
-            encoding="utf-8"
-        ) as f:
+        # Save chunk output
+        with open(CHUNK_JSON, "w", encoding="utf-8") as f:
 
             json.dump(
                 chunks,
@@ -574,13 +269,10 @@ if __name__ == "__main__":
                 indent=2
             )
 
-        logging.info(
-            f"ĐÃ GHI ĐÈ PHÂN MẢNH THÀNH CÔNG - "
-            f"{CHUNK_JSON}"
-        )
+        logging.info(f"Saved -> {CHUNK_JSON}")
 
     except Exception as e:
 
         logging.critical(
-            f"LỖI TIẾN TRÌNH: {str(e)}"
+            f"Pipeline Error -> {str(e)}"
         )

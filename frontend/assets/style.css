@@ -1,21 +1,42 @@
-
-
-*, html, body, [class*="st-"], .stApp, p, div, span, h1, h2, h3, h4, h5, h6, textarea, input, button {
+*,
+html,
+body,
+[class*="st-"],
+.stApp,
+p,
+div,
+span,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+textarea,
+input,
+button {
     font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
 }
 
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"] {
+html,
+body,
+[data-testid="stAppViewContainer"],
+[data-testid="stMainBlockContainer"] {
     background-color: #ffffff !important;
     color: #1d1d1f !important;
     -webkit-font-smoothing: antialiased !important;
     -moz-osx-font-smoothing: grayscale !important;
 }
 
-header, [data-testid="stHeader"], [data-testid="stToolbar"], footer {
+header,
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+footer {
     display: none !important;
 }
+
 h1 {
-    font-size: 56px !important; 
+    font-size: 56px !important;
     font-weight: 800 !important;
     letter-spacing: -0.04em !important;
     color: #000000 !important;
@@ -28,11 +49,12 @@ h1 {
     text-align: center;
     color: #86868b !important;
     font-size: 18px;
-    font-weight: 500; 
+    font-weight: 500;
     margin-bottom: 2.5rem !important;
 }
+
 .user-bubble {
-    background-color: #007aff !important; 
+    background-color: #007aff !important;
     color: #ffffff !important;
     padding: 12px 18px;
     border-radius: 20px 20px 4px 20px;
@@ -41,7 +63,7 @@ h1 {
     max-width: 80%;
     font-size: 16px;
     line-height: 1.5;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     font-weight: 400;
 }
 
@@ -54,36 +76,37 @@ h1 {
     max-width: 95%;
     font-size: 16px;
     line-height: 1.65;
-    border-bottom: 1px solid #f2f2f7; 
+    border-bottom: 1px solid #f2f2f7;
 }
+
 /* KHUNG NHẬP CÂU HỎI*/
 [data-testid="stChatInput"] {
     padding-bottom: 30px !important;
     background-color: transparent !important;
 }
 
-[data-testid="stChatInput"] > div {
-    background-color: #342f2f !important; 
-    border: 1.5px solid #060690 !important; 
+[data-testid="stChatInput"]>div {
+    background-color: #342f2f !important;
+    border: 1.5px solid #060690 !important;
     border-radius: 20px !important;
     box-shadow: 0 2px 10px rgb(118, 80, 241) !important;
     transition: all 0.2s ease-in-out;
-    padding-right: 15px !important; 
+    padding-right: 15px !important;
 }
 
-[data-testid="stChatInput"] > div:focus-within {
+[data-testid="stChatInput"]>div:focus-within {
     border-color: #007aff !important;
     box-shadow: 0 0 0 4px rgba(240, 238, 238, 0.868) !important;
 }
 
 [data-testid="stChatInput"] textarea {
-    background-color: transparent !important; 
-    color: #ffffff !important; 
+    background-color: transparent !important;
+    color: #ffffff !important;
     font-size: 16px !important;
     line-height: 1.6 !important;
     padding: 12px 15px !important;
     border: none !important;
-    caret-color: #007aff !important; 
+    caret-color: #007aff !important;
 }
 
 [data-testid="stChatInput"] textarea::placeholder {
@@ -91,11 +114,12 @@ h1 {
     opacity: 0.8;
 }
 
-[data-testid="stChatInput"] > div::after, 
+[data-testid="stChatInput"]>div::after,
 [data-testid="stChatInput"] button {
     display: none !important;
     content: none !important;
 }
+
 /*SOURCE PILLS  */
 .source-pills-container {
     margin-top: 4px;

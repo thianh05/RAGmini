@@ -18,7 +18,7 @@ try {
         parent.window.addEventListener('scroll', () => {
             const scrollPosition = parent.window.scrollY + parent.window.innerHeight;
             const totalHeight = parent.document.body.scrollHeight;
-            
+
             // Nếu người dùng cuộn ngược lên trên hơn 150px so với đáy trang,
             // hệ thống sẽ ngầm hiểu: "À, sếp đang muốn đọc lại lịch sử cũ".
             // Lúc này, auto-scroll sẽ bị TẠM KHÓA để không làm phiền sếp đọc bài.
@@ -42,7 +42,7 @@ try {
         // ---------------------------------------------------------
         const observer = new MutationObserver((mutations) => {
             let shouldScroll = false;
-            
+
             mutations.forEach((mutation) => {
                 // Bắt sự kiện: Có bong bóng chat mới xuất hiện HOẶC AI đang gõ từng chữ
                 if (mutation.addedNodes.length > 0 || mutation.type === 'characterData') {
@@ -56,10 +56,10 @@ try {
             // sau đó trình duyệt mới cuộn mượt xuống 1 lần.
             if (shouldScroll) {
                 clearTimeout(scrollTimeout);
-                scrollTimeout = setTimeout(smoothScrollToBottom, 100); 
+                scrollTimeout = setTimeout(smoothScrollToBottom, 100);
             }
         });
-        
+
         // ---------------------------------------------------------
         // 4. KÍCH HOẠT OBSERVER VÀO VÙNG CHỨA CHAT
         // ---------------------------------------------------------

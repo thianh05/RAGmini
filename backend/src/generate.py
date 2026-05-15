@@ -4,24 +4,12 @@ import time
 import ollama
 import logging
 
-# Typing cho code dễ đọc hơn
 from typing import List, Dict, Any, Tuple
-
-# Load biến môi trường từ file .env
 from dotenv import load_dotenv
-
-# Embedding model
 from sentence_transformers import SentenceTransformer
-
-# Hybrid Retriever tự viết
 from retrieval import HybridRetriever
 
-
-# =====================================================
-# 1. LOGGING + ENV
-# =====================================================
-
-# Cấu hình log hệ thống
+# [1] Cấu hình logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -29,293 +17,250 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Load biến môi trường từ .env
+# [1.1] Load biến môi trường từ file .env
 load_dotenv()
 
 
-# =====================================================
-# 2. CONFIG CLASS
-# =====================================================
-# Chứa toàn bộ cấu hình hệ thống
-#
-# Ưu điểm:
-# - gom config 1 nơi
-# - dễ chỉnh sửa
-# - dễ scale project
+# [2] Class quản lý toàn bộ config hệ thống
 class RAGConfig:
 
-    # =================================================
-    # OLLAMA CONFIG
-    # =================================================
+    """
+    Chứa toàn bộ cấu hình:
 
-    # Tên model
-    #
-    # getenv:
-    # -> đọc từ file .env
-    # -> nếu không có thì dùng default
+    - Ollama model
+    - Path dữ liệu
+    - Tham số generation
+    """
+
+    # [2.1] Tên model Ollama
     MODEL = os.getenv(
         "OLLAMA_MODEL_NAME",
         "qwen2.5:1.5b"
     )
 
-    # URL server Ollama
+    # [2.2] URL Ollama server
     BASE_URL = os.getenv(
         "OLLAMA_BASE_URL",
         "http://localhost:11434"
     )
 
-    # =================================================
-    # PATH CONFIG
-    # =================================================
-
-    # Thư mục gốc project
+    # [2.3] Thư mục gốc project
     BASE_DIR = os.path.dirname(
         os.path.dirname(
             os.path.abspath(__file__)
         )
     )
 
-    # File FAISS index
+    # [2.4] Đường dẫn FAISS index
     INDEX_PATH = os.path.join(
         BASE_DIR,
         "data",
         "triet.index"
     )
 
-    # File metadata embedding
+    # [2.5] Đường dẫn metadata
     META_PATH = os.path.join(
         BASE_DIR,
         "data",
         "triet_embeddings.json"
     )
 
-    # =================================================
-    # MODEL PARAMS
-    # =================================================
-
-    # Temperature thấp
-    # -> output ổn định hơn
+    # [2.6] Độ sáng tạo của model
     TEMP = 0.15
 
-    # Số document retrieve
+    # [2.7] Số document retrieve
     TOP_K = 4
 
 
-# =====================================================
-# 3. RAG ENGINE
-# =====================================================
-# Đây là "bộ não" của toàn hệ thống
-#
-# Chức năng:
-# - retrieval
-# - prompt building
-# - gọi LLM
-# - streaming
-# - quản lý lịch sử chat
+# [3] Core RAG Engine
 class PhilosophyRAG:
 
-    # =================================================
-    # INIT
-    # =================================================
+    """
+    Pipeline hệ thống RAG:
+
+    1. Nhận câu hỏi user
+    2. Query enhancement bằng HyDE
+    3. Retrieval tài liệu liên quan
+    4. Build context
+    5. Gọi LLM generate
+    6. Streaming phản hồi
+    """
+
+    # [3.1] Khởi tạo hệ thống
     def __init__(self):
 
-        # Kết nối Ollama local
+        # [3.1.1] Kết nối Ollama server
         self.client = ollama.Client(
             host=RAGConfig.BASE_URL
         )
 
         try:
 
-            # =============================================
-            # LOAD EMBEDDING MODEL
-            # =============================================
+            # [3.1.2] Load embedding model
             logger.info(
-                "Đang khởi tạo Embedding Model (E5)..."
+                "Đang khởi tạo embedding model..."
             )
 
-            # multilingual-e5-small
-            #
-            # embedding model đa ngôn ngữ
             self.embed_model = SentenceTransformer(
                 'intfloat/multilingual-e5-small'
             )
 
-            # =============================================
-            # LOAD HYBRID RETRIEVER
-            # =============================================
+            # [3.1.3] Load retrieval engine
             logger.info(
-                "Đang nạp dữ liệu vào Hybrid Retriever..."
+                "Đang nạp Hybrid Retriever..."
             )
 
             self.retriever = HybridRetriever(
+
                 RAGConfig.INDEX_PATH,
+
                 RAGConfig.META_PATH,
+
                 self.embed_model
             )
 
             logger.info(
-                "Database initialized successfully."
+                "Database initialized successfully"
             )
 
         except Exception as e:
 
             logger.error(
-                f"Failed to load database: {e}"
+                f"Không thể load database: {e}"
             )
 
             # Dừng chương trình nếu load fail
             sys.exit(1)
 
-        # =================================================
-        # SYSTEM PROMPT
-        # =================================================
-        # Prompt ép AI:
-        # - đúng giáo trình
-        # - không hallucination
-        # - có logic suy luận
+        # [3.1.4] System prompt điều khiển AI
         self.system_instructions = (
 
-            "BẠN LÀ CHUYÊN GIA TRIẾT HỌC MÁC - LÊNIN CAO CẤP.\n"
-
-            "NGUYÊN TẮC BẮT BUỘC:\n"
-
-            "1. ĐỊNH NGHĨA CHUẨN: "
-            "CSHT là Quan hệ sản xuất; "
-            "KTTT là Tư tưởng & Thiết chế chính trị.\n"
-
-            "2. QUY TRÌNH TƯ DUY: "
-            "[Kiểm tra tài liệu] -> "
-            "[Trích dẫn số trang] -> "
-            "[Phân tích logic] -> "
-            "[Kết luận].\n"
-
-            "3. TRUNG THỰC: "
-            "Nếu tài liệu không chứa câu trả lời, "
-            "hãy nói: "
-            "'Dữ liệu giáo trình hiện tại không đủ để kết luận'.\n"
-
-            "4. KHÔNG SUY DIỄN: "
-            "Tuyệt đối không đưa kiến thức ngoài luồng "
-            "vào nếu nó xung đột với giáo trình."
+            "BẠN LÀ CHUYÊN GIA TRIẾT HỌC MÁC - LÊNIN.\n"
+            "NGUYÊN TẮC:\n"
+            "1. Trả lời theo giáo trình.\n"
+            "2. Có trích dẫn số trang.\n"
+            "3. Không suy diễn ngoài tài liệu.\n"
+            "4. Nếu dữ liệu không đủ, "
+            "hãy nói rõ không đủ thông tin."
         )
 
-    # =================================================
-    # HYDE QUERY
-    # =================================================
-    # HyDE = Hypothetical Document Embeddings
-    #
-    # Ý tưởng:
-    # - dùng LLM tạo "định nghĩa giả"
-    # - ghép vào query
-    # - retrieval semantic tốt hơn
-    def _get_hyde_query(self, query: str) -> str:
+    # [3.2] Query Enhancement bằng HyDE
+    def _get_hyde_query(
+        self,
+        query: str
+    ) -> str:
+
+        """
+        HyDE:
+        - Sinh định nghĩa giả bằng LLM
+        - Ghép vào query
+        - Giúp semantic retrieval tốt hơn
+        """
 
         try:
 
-            # Prompt cho LLM
+            # [3.2.1] Prompt tạo định nghĩa giả
             prompt = (
+
                 "Tóm tắt định nghĩa ngắn gọn "
-                f"về thuật ngữ này để hỗ trợ tìm kiếm: {query}"
+                f"để hỗ trợ retrieval: {query}"
             )
 
-            # Generate text
+            # [3.2.2] Generate text từ LLM
             res = self.client.generate(
+
                 model=RAGConfig.MODEL,
+
                 prompt=prompt
             )
 
-            # Query mở rộng
-            return f"{query} {res['response']}"
+            # [3.2.3] Ghép query mở rộng
+            return (
+                f"{query} "
+                f"{res['response']}"
+            )
 
         except Exception as e:
 
-            logger.warning(f"HyDE failed: {e}")
+            logger.warning(
+                f"HyDE failed: {e}"
+            )
 
-            # Fail thì dùng query gốc
+            # Fallback về query gốc
             return query
 
-    # =================================================
-    # GENERATE ANSWER
-    # =================================================
+    # [3.3] Generate câu trả lời
     def generate_answer(
         self,
         user_query: str,
         chat_history: List[Dict]
     ) -> Tuple[str, List]:
 
-        # =================================================
-        # STEP 1: QUERY ENHANCEMENT
-        # =================================================
-        # Dùng HyDE để mở rộng query
+        # [3.3.1] Mở rộng query bằng HyDE
         enhanced_search = self._get_hyde_query(
             user_query
         )
 
-        # =================================================
-        # STEP 2: RETRIEVAL
-        # =================================================
+        # [3.3.2] Retrieval document liên quan
         logger.info(
-            f"Retrieving context for: {user_query[:50]}..."
+            f"Retrieving context -> "
+            f"{user_query[:50]}"
         )
 
-        # Search document liên quan
         filtered_docs = self.retriever.search(
+
             enhanced_search,
+
             top_k=RAGConfig.TOP_K
         )
 
-        # Không tìm thấy document
+        # [3.3.3] Không tìm thấy tài liệu
         if not filtered_docs:
 
             return (
-                "Xin lỗi, tôi không tìm thấy nội dung "
-                "tương ứng trong giáo trình để trả lời "
-                "chính xác câu hỏi này.",
+                "Không tìm thấy nội dung phù hợp "
+                "trong giáo trình.",
                 []
             )
 
-        # =================================================
-        # STEP 3: BUILD CONTEXT
-        # =================================================
-
-        # Ghép toàn bộ context
+        # [3.3.4] Build context cho LLM
         context_text = "\n\n".join([
 
-            f"--- TRANG {d['page']} ---\n{d['text']}"
+            f"--- TRANG {d['page']} ---\n"
+            f"{d['text']}"
 
             for d in filtered_docs
         ])
 
-        # =================================================
-        # BUILD CHAT MESSAGE
-        # =================================================
+        # [3.3.5] Build message chat
         messages = [
 
-            # System Prompt
+            # System prompt
             {
                 'role': 'system',
                 'content': self.system_instructions
             },
 
-            # Lấy 4 message gần nhất
+            # Giữ 4 message gần nhất
             *chat_history[-4:],
 
-            # User Prompt cuối cùng
+            # User prompt
             {
                 'role': 'user',
+
                 'content':
-                    f"[NGỮ CẢNH GIÁO TRÌNH]:\n"
+
+                    f"[NGỮ CẢNH]\n"
                     f"{context_text}\n\n"
-                    f"[CÂU HỎI]: {user_query}"
+
+                    f"[CÂU HỎI]\n"
+                    f"{user_query}"
             }
         ]
 
-        # =================================================
-        # STEP 4: STREAMING
-        # =================================================
-
+        # [3.3.6] Header terminal output
         print(
-            f"\n[Giáo sư AI - {RAGConfig.MODEL}]:\n"
+            f"\n[Giáo sư AI - {RAGConfig.MODEL}]\n"
             + "═" * 50
         )
 
@@ -323,14 +268,14 @@ class PhilosophyRAG:
 
         try:
 
-            # Gọi Ollama Chat API
+            # [3.3.7] Gọi Ollama Chat API
             stream = self.client.chat(
 
                 model=RAGConfig.MODEL,
 
                 messages=messages,
 
-                # Stream realtime
+                # Stream token realtime
                 stream=True,
 
                 options={
@@ -343,128 +288,130 @@ class PhilosophyRAG:
                 }
             )
 
-            # =============================================
-            # STREAM TOKEN
-            # =============================================
+            # [3.3.8] Stream token realtime
             for chunk in stream:
 
-                # Token mới sinh
                 token = chunk['message']['content']
 
-                # In realtime ra terminal
-                print(token, end="", flush=True)
+                # In token realtime
+                print(
+                    token,
+                    end="",
+                    flush=True
+                )
 
                 # Lưu full response
                 full_response += token
 
             print("\n" + "═" * 50)
 
-            # =================================================
-            # UPDATE CHAT HISTORY
-            # =================================================
-
-            # Lưu câu hỏi user
+            # [3.3.9] Cập nhật chat history
             chat_history.append({
+
                 'role': 'user',
+
                 'content': user_query
             })
 
-            # Lưu câu trả lời assistant
             chat_history.append({
+
                 'role': 'assistant',
+
                 'content': full_response
             })
 
-            # =================================================
-            # METADATA OUTPUT
-            # =================================================
-
-            # Lấy danh sách page
+            # [3.3.10] Lấy source pages
             pages = sorted(list(set([
+
                 d['page']
+
                 for d in filtered_docs
             ])))
 
-            # In source page
+            # [3.3.11] Hiển thị source pages
             print(
-                f"Nguồn trích dẫn: "
+                f"Nguồn tham khảo: "
                 f"Trang {', '.join(map(str, pages))}"
             )
 
-            return full_response, filtered_docs
+            return (
+                full_response,
+                filtered_docs
+            )
 
         except Exception as e:
 
-            logger.error(f"Inference Error: {e}")
+            logger.error(
+                f"Inference error: {e}"
+            )
 
             return (
-                "Hệ thống gặp sự cố khi tạo phản hồi.",
+                "Hệ thống gặp lỗi khi generate.",
                 []
             )
 
 
-# =====================================================
-# 4. MAIN PROGRAM
-# =====================================================
-# Entry point của chương trình
+# [4] Main Program
 if __name__ == "__main__":
 
-    # =================================================
-    # CLEAR TERMINAL
-    # =================================================
+    # [4.1] Clear terminal
     os.system(
-        'cls' if os.name == 'nt'
+        'cls'
+        if os.name == 'nt'
         else 'clear'
     )
 
-    # =================================================
-    # INIT ENGINE
-    # =================================================
+    # [4.2] Khởi tạo RAG engine
     engine = PhilosophyRAG()
 
-    # Lưu lịch sử chat
+    # [4.3] Lưu lịch sử chat
     history = []
 
     print(
-        "\nTip: "
-        "Nhập 'exit' để thoát, "
-        "'clear' để xóa lịch sử chat."
+        "\nTip:\n"
+        "- exit : thoát chương trình\n"
+        "- clear : xóa lịch sử chat"
     )
 
-    # =================================================
-    # CHAT LOOP
-    # =================================================
+    # [4.4] Chat loop
     while True:
 
         try:
 
-            # Input user
+            # [4.4.1] Nhận input user
             prompt = input(
-                "\n Hãy hỏi gì đó: "
+                "\nHãy hỏi gì đó: "
             ).strip()
 
-            # Empty input
+            # [4.4.2] Bỏ qua input rỗng
             if not prompt:
                 continue
 
-            # Exit app
-            if prompt.lower() in ['exit', 'quit']:
+            # [4.4.3] Thoát chương trình
+            if prompt.lower() in [
+
+                'exit',
+                'quit'
+            ]:
+
                 break
 
-            # Clear history
+            # [4.4.4] Reset chat history
             if prompt.lower() == 'clear':
 
                 history = []
 
                 print(
-                    "Đã xóa lịch sử hội thoại."
+                    "Đã xóa lịch sử hội thoại"
                 )
 
                 continue
 
-            # Generate answer
+            # [4.4.5] Generate answer
             engine.generate_answer(
+
                 prompt,
+
                 history
             )
 
